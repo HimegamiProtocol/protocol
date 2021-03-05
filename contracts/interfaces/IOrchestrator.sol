@@ -8,9 +8,13 @@ interface IOrchestrator {
 
     function setRebaseSalePaused(bool paused) external;
 
+    function setUseStaticSalePerRebase(bool used) external;
+
     function addUniPair(address token1, address token2) external;
 
     function deleteUniPair(uint256 index) external;
 
     function setUniPairEnabled(uint256 index, bool enabled) external;
+
+    function setSyncGas(uint256 syncGas) external;
 }

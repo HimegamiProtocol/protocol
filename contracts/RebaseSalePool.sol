@@ -12,10 +12,15 @@ contract RebaseSalePool is OwnableUpgradeSafe {
     IElasticToken public KGR;
 
     // Exchangerate ETHKGR with fixed point 18 decimal
+    uint256 private constant DECIMALS = 18;
+    // Keep this variable for save upgrade contract
     uint256 public rateETHKGR;
 
-    event LogSalePoolRateUpdated(uint256 newRate_);
-    event LogSalePoolSell(address buyer, uint256 amountKGR, uint256 amountETH);
+    uint256 public rateBuy;
+
+    uint256 public saleCommissionPercent;
+
+    event LogBuy(address buyer, uint256 amountKGR, uint256 amountETH);
 
     function initialize() external initializer {
         __Ownable_init();
@@ -25,20 +30,35 @@ contract RebaseSalePool is OwnableUpgradeSafe {
         KGR = IElasticToken(kgr_);
     }
 
-    function setExchangeRate(uint256 rate_) external onlyOwner {
-        rateETHKGR = rate_;
-        emit LogSalePoolRateUpdated(rate_);
+    function setRateBuy(uint256 rate_) external onlyOwner {
+        rateBuy = rate_;
+    }
+
+    function setSaleCommissionPercent(uint256 percent_) external onlyOwner {
+        require(percent_ < 100);
+        saleCommissionPercent = percent_;
+    }
+
+    function withdraw() external onlyOwner {
+        msg.sender.transfer(address(this).balance);
     }
 
     /*
      * @title Customer buy KGR with fixed price use ETH
-     * ETH Will be foward to owner address
+     * owner will receive sale commission
      */
     function buyKGR() external payable {
-        require(rateETHKGR > 0 && msg.value > 0);
-        uint256 amountKGR = msg.value.mul(rateETHKGR).div(10**18);
-        payable(owner()).transfer(msg.value);
+        require(rateBuy > 0 && msg.value > 0);
+        uint256 amountKGR = msg.value.mul(rateBuy).div(10**DECIMALS);
+        if (saleCommissionPercent > 0) {
+            uint256 commission = msg.value.mul(saleCommissionPercent).div(100);
+            payable(owner()).transfer(commission);
+        }
         KGR.transfer(msg.sender, amountKGR);
-        emit LogSalePoolSell(msg.sender, amountKGR, msg.value);
+        emit LogBuy(msg.sender, amountKGR, msg.value);
+    }
+
+    function getRateBuy() external view returns (uint256) {
+        return rateBuy;
     }
 }

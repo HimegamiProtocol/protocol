@@ -43,7 +43,7 @@ contract BuybackPool is OwnableUpgradeSafe {
     function sellKGR(uint256 amountKGR) external {
         require(amountKGR > 0);
         require(rateETHKGR > 0);
-        uint256 amountETH = amountKGR.div(rateETHKGR).mul(DECIMALS);
+        uint256 amountETH = amountKGR.div(rateETHKGR).mul(10**DECIMALS);
         KGR.transferFrom(msg.sender, owner(), amountKGR);
         msg.sender.transfer(amountETH);
         emit LogBuybackPoolPoolBuy(msg.sender, amountKGR, amountETH);

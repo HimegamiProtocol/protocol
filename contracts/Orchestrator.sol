@@ -4,13 +4,12 @@ pragma solidity 0.6.12;
 import "@openzeppelin/contracts-ethereum-package/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts-ethereum-package/contracts/math/SafeMath.sol";
 
+import "./interfaces/IElasticToken.sol";
 import "./interfaces/IMonetaryPolicy.sol";
 
-interface IUniV2Pair {
-    function sync() external;
-}
+import "./Utils.sol";
 
-contract Orchestrator is OwnableUpgradeSafe {
+contract Orchestrator is OwnableUpgradeSafe, Utils {
     using SafeMath for uint256;
 
     IMonetaryPolicy public monetaryPolicy;
@@ -19,21 +18,27 @@ contract Orchestrator is OwnableUpgradeSafe {
     uint256 public salePerRebase;
     bool public rebaseSalePaused;
 
+    uint256 private _syncGas;
+
     event LogAddNewUniPair(address token1, address token2);
     event LogDeleteUniPair(bool enabled, address uniPair);
     event LogSetUniPairEnabled(uint256 index, bool enabled);
     event LogRebaseSalePausedUpdate(bool paused);
     event LogRebaseSalePoolUpdate(address pool, uint256 amount);
-
-    uint256 constant SYNC_GAS = 50000;
-    address constant uniFactory = 0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f;
+    event LogUseStaticSalePerRebaseUpdate(bool used);
+    event LogSalePerRebaseBaseSupplyPerThousandUpdate(uint256 perThousand);
 
     struct UniPair {
         bool enabled;
-        IUniV2Pair pair;
+        IUniswapV2Pair pair;
     }
 
     UniPair[] public uniSyncs;
+
+    //Orchestrator V2
+    IElasticToken public KGR;
+    bool public useStaticSalePerRebase;
+    uint256 public salePerRebaseBaseSupplyPerThousand;
 
     modifier indexInBounds(uint256 index) {
         require(
@@ -43,34 +48,20 @@ contract Orchestrator is OwnableUpgradeSafe {
         _;
     }
 
-    function genUniAddr(address left, address right)
-        internal
-        pure
-        returns (IUniV2Pair)
-    {
-        address first = left < right ? left : right;
-        address second = left < right ? right : left;
-        address pair =
-            address(
-                uint256(
-                    keccak256(
-                        abi.encodePacked(
-                            hex"ff",
-                            uniFactory,
-                            keccak256(abi.encodePacked(first, second)),
-                            hex"96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-                        )
-                    )
-                )
-            );
-        return IUniV2Pair(pair);
-    }
-
     function initialize(address monetaryPolicy_) external initializer {
         __Ownable_init();
         monetaryPolicy = IMonetaryPolicy(monetaryPolicy_);
 
         rebaseSalePaused = true;
+        _syncGas = 0;
+    }
+
+    function setElasticToken(address addr) external onlyOwner {
+        KGR = IElasticToken(addr);
+    }
+
+    function setSyncGas(uint256 syncGas) external onlyOwner {
+        _syncGas = syncGas;
     }
 
     function setRebaseSalePool(address pool_, uint256 amount_)
@@ -85,7 +76,29 @@ contract Orchestrator is OwnableUpgradeSafe {
 
     function setRebaseSalePaused(bool paused) external onlyOwner {
         rebaseSalePaused = paused;
+        if (
+            rebaseSalePaused == true &&
+            address(rebaseSalePool) != address(0x0) &&
+            address(KGR) != address(0x0) &&
+            KGR.balanceOf(rebaseSalePool) > 0
+        ) {
+            monetaryPolicy.stablize(rebaseSalePool, 0);
+        }
         emit LogRebaseSalePausedUpdate(paused);
+    }
+
+    function setUseStaticSalePerRebase(bool used) external onlyOwner {
+        useStaticSalePerRebase = used;
+        emit LogUseStaticSalePerRebaseUpdate(used);
+    }
+
+    function setSalePerRebaseBaseSupplyPerThousand(uint256 perThousand)
+        external
+        onlyOwner
+    {
+        require(salePerRebaseBaseSupplyPerThousand < 1000);
+        salePerRebaseBaseSupplyPerThousand = perThousand;
+        emit LogSalePerRebaseBaseSupplyPerThousandUpdate(perThousand);
     }
 
     function addUniPair(address token1, address token2) external onlyOwner {
@@ -130,14 +143,31 @@ contract Orchestrator is OwnableUpgradeSafe {
         monetaryPolicy.rebase();
 
         if (rebaseSalePaused == false) {
-            monetaryPolicy.stablize(rebaseSalePool, salePerRebase);
+            if (useStaticSalePerRebase) {
+                monetaryPolicy.stablize(rebaseSalePool, salePerRebase);
+            } else {
+                require(address(KGR) != address(0x0));
+                require(salePerRebaseBaseSupplyPerThousand > 0);
+                uint256 amount =
+                    KGR
+                        .totalSupply()
+                        .mul(salePerRebaseBaseSupplyPerThousand)
+                        .div(1000);
+                monetaryPolicy.stablize(rebaseSalePool, amount);
+            }
         }
 
         for (uint256 i = 0; i < uniSyncs.length; i++) {
             if (uniSyncs[i].enabled) {
-                address(uniSyncs[i].pair).call{gas: SYNC_GAS}(
-                    abi.encode(uniSyncs[i].pair.sync.selector)
-                );
+                if (_syncGas > 0) {
+                    address(uniSyncs[i].pair).call{gas: _syncGas}(
+                        abi.encode(uniSyncs[i].pair.sync.selector)
+                    );
+                } else {
+                    address(uniSyncs[i].pair).call(
+                        abi.encode(uniSyncs[i].pair.sync.selector)
+                    );
+                }
             }
         }
     }
