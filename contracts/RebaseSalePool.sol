@@ -118,7 +118,7 @@ contract RebaseSalePool is OwnableUpgradeSafe {
         KGRb.mint(msg.sender, kgrbAmount);
 
         uint256 amountETH =
-            convertAmount.sub(kgrbAmount).div(rateSell).mul(10**DECIMALS);
+            convertAmount.sub(kgrbAmount).mul(10**DECIMALS).div(rateSell);
         msg.sender.transfer(amountETH);
 
         emit LogSell(msg.sender, amountKGR, amountETH);
